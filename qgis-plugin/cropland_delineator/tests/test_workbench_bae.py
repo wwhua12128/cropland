@@ -222,6 +222,22 @@ assert rl.extent().width() > 100  # 米制坐标而非经纬度
 lens = sorted(round(f.geometry().length()) for f in rl.getFeatures())
 print(f"T9 道路缓存 GPKG ✓  2 条重投影落盘，长度(m)={lens}")
 
+# ==== T9b Windows 文件锁退让：主缓存被占用时落旁路文件不炸 ====
+if os.name == "nt":
+    p2 = None
+    _hold = open(path, "a")  # Win 下 CRT 句柄禁删，模拟"别的进程占着缓存"
+    try:
+        p2 = osm_roads.save_roads(
+            feats, grid, QgsCoordinateReferenceSystem("EPSG:4550"))
+        assert p2 and p2 != path and os.path.exists(p2), p2
+        rl2 = QgsVectorLayer(p2 + "|layername=osm_roads", "osm2", "ogr")
+        assert rl2.isValid() and rl2.featureCount() == 2
+    finally:
+        _hold.close()  # p2 留给 rl2 持有到进程退出，不必清理（%TEMP% 本就如此）
+    print("T9b 缓存被锁退让 ✓  落旁路文件，层可读")
+else:
+    print("T9b 跳过（非 Windows：unlink 打开中的文件本身合法）")
+
 # ==== T10 Shift 正交锁 ====
 p = map_tools.PolylineTool._ortho_snap(
     QgsPointXY(0, 0), QgsPointXY(100, 30))

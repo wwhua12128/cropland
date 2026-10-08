@@ -79,8 +79,19 @@ python3 tests/test_ledger.py        # 台账 17 组
 python3 tests/test_lasso.py         # 磁力引擎 17 组
 python3 tests/test_clickseg.py      # 点选 14 组（含锁面/密格回归）
 # 其余：test_snap 6 / test_workbench_bae 12 / test_qa
+```
+
+**Windows 无头回归**（QGIS 自带的 python-qgis.bat 会清空 PYTHONPATH，
+统一走 `tests/win_headless.py`，每套测试独立子进程隔离退出码）：
+
+```powershell
+cd qgis-plugin\cropland_delineator
+& "D:\Program Files\QGIS 4.2.2\bin\python-qgis.bat" tests\win_headless.py `
+  test_ledger.py test_lasso.py test_snap.py test_workbench_bae.py test_qa.py test_clickseg.py
+```
 
 # 发版：改 metadata.txt 版本号后
+```bash
 bash tools/publish.sh               # 需 gh auth login 一次
 ```
 

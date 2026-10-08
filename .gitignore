@@ -2,6 +2,9 @@
 # 影像/标注数据/权重/venv/论文/写作等一律不进仓库。
 /*
 !/.gitignore
+!/AGENTS.md
+!/.agents/
+/.agents/memory/local/
 !/README.md
 !/使用指南.md
 !/tools/

@@ -41,7 +41,9 @@ MAJOR_CLASSES = {
 def cache_path(grid):
     """道路缓存放渔网文件同目录；渔网不是文件图层时返回 None。"""
     src = grid.source().split("|")[0]
-    if src.startswith("/") and os.path.isfile(src):
+    # 直接用 isfile 判文件图层：memory/provider 字符串不是文件自然 False，
+    # 且 Windows 盘符路径（C:\…）与 POSIX 绝对路径（/…）通吃。
+    if os.path.isfile(src):
         return os.path.join(os.path.dirname(src), "osm_道路.gpkg")
     return None
 
@@ -138,7 +140,20 @@ def save_roads(features, grid, dest_crs=None):
         mem.dataProvider().addFeature(feat)
 
     if os.path.exists(path):
-        os.remove(path)
+        try:
+            os.remove(path)
+        except PermissionError:
+            # Windows：缓存正被别的进程/图层占着（如 QGIS 里还开着旧工程
+            # 的道路层），删除被拒。落旁路文件不炸功能；调用方按返回值
+            # 加载，不受影响。下次无锁时自然回归主路径。
+            root, ext = os.path.splitext(path)
+            for i in range(1, 100):
+                alt = f"{root}_{i}{ext}"
+                if not os.path.exists(alt):
+                    path = alt
+                    break
+            else:
+                return None
     opts = QgsVectorFileWriter.SaveVectorOptions()
     opts.driverName = "GPKG"
     opts.layerName = "osm_roads"

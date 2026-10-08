@@ -171,8 +171,11 @@ res = {}
 # 模拟 QGIS（Windows）污染环境：worker 里不应看到 PYTHONHOME/PYTHONPATH
 os.environ["PYTHONHOME"] = "/bogus/qgis/python"
 os.environ["PYTHONPATH"] = "/bogus/qgis/libs"
+# 注意用 T1 解析出的 venv python：sys.executable 在 Windows 无头跑法下是
+# QGIS 内嵌 python，其非标准布局（bin 里无 Lib）被剥掉 PYTHONHOME 后自己
+# 都起不来；生产路径本来就是 venv python 拉 worker。
 svc = clickseg.SamClickService(
-    sys.executable, [stub], log)
+    py, [stub], log)
 wait_until(lambda: svc.device == "stub", why="ready 事件")
 del os.environ["PYTHONHOME"]
 del os.environ["PYTHONPATH"]
@@ -557,7 +560,13 @@ open(_os.path.join(real_nn, "ckpt", "sam_vit_b_01ec64.pth"), "w").close()
 _os.makedirs(real_plugin)
 profile_plugin = _os.path.join(root, "profile", "plugins", "cropland_delineator")
 _os.makedirs(_os.path.dirname(profile_plugin))
-_os.symlink(real_plugin, profile_plugin)
+if _os.name == "nt":
+    # Windows 建符号链接要特权（WinError 1314）；目录联接同为 reparse
+    # point，realpath 同样解析到真实路径，回归语义等价。
+    import _winapi
+    _winapi.CreateJunction(real_plugin, profile_plugin)
+else:
+    _os.symlink(real_plugin, profile_plugin)
 
 _saved_file = clickseg.__file__
 try:
@@ -604,7 +613,8 @@ with open(boom, "w") as f:
     f.write("import sys\n"
             "sys.stderr.write('boom traceback line\\n'); sys.stderr.flush()\n"
             "sys.exit(1)\n")
-svc2 = clickseg.SamClickService(sys.executable, [boom], log)
+py_real, _ = clickseg.service_argv(nn_dir)  # T7 把 py 换成了假布局的空壳；
+svc2 = clickseg.SamClickService(py_real, [boom], log)  # 崩溃语义测试要用真 venv
 wait_until(lambda: any("启动即退出" in m for m in LOGS), why="崩溃提示")
 wait_until(lambda: any("[SAM] boom" in m for m in LOGS), why="stderr 透传")
 assert svc2.device is None

@@ -56,7 +56,10 @@ def find_nn_dir():
     查找顺序：环境变量 CROPLAND_NN_DIR → QSettings（朋友在 Python 控制台
     一行代码指定，免环境变量免重启）→ 插件目录旁的开发布局 alpha/nn。
     """
-    here = os.path.dirname(os.path.abspath(__file__))
+    # realpath 先行：Windows 目录联接（README 推荐的 mklink /J 安装）下，
+    # Win32 对路径里的 ".." 只做词法折叠不解析联接，候选会折回 profile 下
+    # 的不存在路径；Linux 内核则是物理解析、本就成立。这里统一先解掉。
+    here = os.path.dirname(os.path.realpath(__file__))
     cands = []
     env = os.environ.get("CROPLAND_NN_DIR")
     if env:

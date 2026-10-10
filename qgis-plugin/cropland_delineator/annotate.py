@@ -315,14 +315,14 @@ class AnnotationController:
             sym = QgsFillSymbol.createSimple({
                 "color": f"{rgb},45",
                 "outline_color": f"{rgb},220",
-                "outline_width": "0.6",
+                "outline_width": "0.2",
             })
             cats.append(QgsRendererCategory(key, sym, label))
         renderer = QgsCategorizedSymbolRenderer("source", cats)
         # source 没匹配到的（如道路差集残余，仍是 base/add 原 source）走默认色
         default_sym = QgsFillSymbol.createSimple({
             "color": "255,170,0,45", "outline_color": "255,170,0,220",
-            "outline_width": "0.6"})
+            "outline_width": "0.2"})
         renderer.setSourceSymbol(default_sym)
         self.layer.setRenderer(renderer)
         self.layer.triggerRepaint()

@@ -738,19 +738,34 @@ class MagneticSplitTool(WorkbenchTool):
         self.wb.apply_split(self.wb.to_layer(line))
 
     def _grow_out(self, pts):
-        """两端外推到刚出地块（splitGeometry 要求线越过地块边界）。"""
+        """两端外推到刚出"锚点所在地块"（splitGeometry 要求线越过地块边界）。
+
+        v0.10.2 修复：原实现 inside 用整格全部要素并集判界——终点旁拼着
+        相邻地块（或整格底板一大块）时，外推线会一路笔直穿过去再穿出，
+        收束后"沿终点向外直线切割其他多边形"即此。现在每端只针对包含
+        该端点的地块集合判界：出这块即停；哪怕多走一步刺进贴边邻块，
+        端点仍在邻块内部（未贯穿），splitGeometry 切不开它，无损。
+        """
         try:
             geoms = [f.geometry() for f in
                      self.wb.layer.getFeatures(self.wb._cell_filter())]
         except Exception:
             geoms = []
 
-        def inside(p):
-            gp = QgsGeometry.fromPointXY(p)
-            return any(g.intersects(gp) for g in geoms)
+        def make_inside(p0):
+            gp = QgsGeometry.fromPointXY(p0)
+            gs = [g for g in geoms if g.intersects(gp)]
+            if not gs:       # 端点本就落在地块外：只多走一步
+                return lambda p: False
+
+            def _in(p):
+                gp2 = QgsGeometry.fromPointXY(p)
+                return any(g.intersects(gp2) for g in gs)
+            return _in
 
         step = self._engine.pixel_size() * 2 if self._engine is not None else 10.0
-        return grow_ends(pts, inside, max(step, 10.0))
+        return grow_ends(pts, make_inside(pts[0]), max(step, 10.0),
+                         inside_end=make_inside(pts[-1]))
 
 
 class PolygonTool(WorkbenchTool):

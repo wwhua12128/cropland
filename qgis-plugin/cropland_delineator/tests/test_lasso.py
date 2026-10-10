@@ -571,6 +571,47 @@ me.keyPressEvent(k1)
 assert me.poly_mode == "add"
 print("[17] 磁力挖 ok（默认红带挖除、净扣 400²、kind=erase、1/2 可切换）")
 
+# ==== T18 外推不误伤：终点旁拼着相邻地块，外推只出所在地块即停 ====
+# v0.10.2 修复：_grow_out 原用整格全部要素并集判 inside——终点旁贴着邻块时，
+# 外推线会一路穿过邻块再穿出（贯穿=两端在外），收束后"沿终点向外直线切割
+# 其他多边形"即此。现在每端只针对包含端点的地块判界：出这块即停；多走的
+# 一步即便刺进邻块，端点仍在邻块内部（未贯穿），splitGeometry 切不开它。
+tool3 = map_tools.MagneticSplitTool(mcv, wb)          # mode="split"
+# 清场重摆：A|B 两块左右拼贴（各 800×1600，格 0..1600）
+# 插件约定 open_layer 后常开编辑会话，要素全活在缓冲里（负 fid）：
+# 先回滚清空，再重开会话保持产品运行态。
+if wb.layer.isEditable():
+    wb.layer.rollBack()
+wb.layer.startEditing()
+app.processEvents()      # 冲刷积压的异步 _adopt（补 cell_id 的 QTimer(0)）
+ids = [f.id() for f in wb.layer.getFeatures(wb._cell_filter())]
+if ids:
+    wb.layer.dataProvider().deleteFeatures(ids)
+wb.layer.triggerRepaint()
+_left = [(f.id(), round(f.geometry().area()))
+         for f in wb.layer.getFeatures(wb._cell_filter())]
+assert not _left, f"清场失败，残留：{_left}"
+wb.apply_add(wb.to_layer(QgsGeometry.fromPolygonXY([[
+    QgsPointXY(0, 0), QgsPointXY(800, 0), QgsPointXY(800, 1600),
+    QgsPointXY(0, 1600), QgsPointXY(0, 0)]])))        # A：左半
+wb.apply_add(wb.to_layer(QgsGeometry.fromPolygonXY([[
+    QgsPointXY(800, 0), QgsPointXY(1600, 0), QgsPointXY(1600, 1600),
+    QgsPointXY(800, 1600), QgsPointXY(800, 0)]])))    # B：右半，与 A 拼贴
+app.processEvents()      # 让异步 _adopt 把 cell_id 补上，过滤才看得见
+tool3._engine = None                                  # 无引擎直线模式
+tool3.anchors = [QgsPointXY(100.0, 800.0), QgsPointXY(700.0, 800.0)]
+tool3.segs = {}
+feats = {f.id(): f for f in wb.layer.getFeatures(wb._cell_filter())}
+b_area = max(f.geometry().area() for f in feats.values())
+assert abs(b_area - 800 * 1600) < 1.0, b_area
+tool3._do_finish()                                    # 线在 A 内、终点朝 B
+feats2 = list(wb.layer.getFeatures(wb._cell_filter()))
+areas = sorted(round(f.geometry().area()) for f in feats2)
+assert len(feats2) == 3, f"A 应切成 2 块、B 完好，实际 {len(feats2)} 块：{areas}"
+assert any(abs(a - 800 * 1600) < 1.0 for a in areas), \
+    f"B（800×1600）必须原样幸存：{areas}"
+print("[18] 外推不误伤 ok（终点旁贴邻块 B：只切所在块 A，B 原样）")
+
 shutil.rmtree(WORK, ignore_errors=True)
-print(f"\n全部 17 组测试通过 ✓  (工作目录已清理)")
+print(f"\n全部 18 组测试通过 ✓  (工作目录已清理)")
 sys.exit(0)

@@ -438,7 +438,8 @@ def simplify_pts(pts, tol):
     return line if len(line) >= 2 else pts
 
 
-def grow_ends(pts, inside, step, max_dist=16000.0, step_cap=64.0):
+def grow_ends(pts, inside, step, max_dist=16000.0, step_cap=64.0,
+              inside_end=None):
     """两端沿首末方向逐步外推，直到落出地块（inside(p) 为 False）。
 
     磁力线的锚点常在地块内部；固定长度延长在斜交边界时会滑进内部出不来，
@@ -446,6 +447,10 @@ def grow_ends(pts, inside, step, max_dist=16000.0, step_cap=64.0):
     整格底板可达数公里宽：基础步长走满 step*80（默认 800m）还没出去就
     步长翻倍加速（单步封顶 step_cap），总程封顶 max_dist；最后"多走一步"
     仍用基础 step，避免大步一跳跨进相邻地块。
+
+    inside_end：终点端独立的判界回调（缺省沿用 inside）。磁力切分用它把
+    "出界"限定为出**锚点所在地块**——整格全部要素并集判界时，终点旁拼着
+    邻块，外推线会一路穿过邻块再穿出，把沿途多边形全切了。
     """
     if len(pts) < 2 or step <= 0:
         return pts
@@ -456,7 +461,8 @@ def grow_ends(pts, inside, step, max_dist=16000.0, step_cap=64.0):
         n = math.hypot(dx, dy) or 1.0
         ux, uy = dx / n, dy / n
         s, walked, p = step, 0.0, a
-        while walked < max_dist and inside(p):
+        hit = inside if end == "start" else (inside_end or inside)
+        while walked < max_dist and hit(p):
             p = QgsPointXY(p.x() + ux * s, p.y() + uy * s)
             walked += s
             if walked >= step * 80:      # 还没出去 → 大地块，加速

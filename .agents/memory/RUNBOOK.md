@@ -31,10 +31,21 @@ etc\ini\python3.bat 无条件 `SET PYTHONPATH=` 清空）——必须走 win_hea
 写工作区本身正常。cmd / Program Files 下的 exe（含 E:\Python311）不受影响。
 绕开：pip 永远 `--no-cache-dir`；`$env:TMP/$env:TEMP` 指到工作区；解释器用 E 盘正式安装。
 
+## pwsh 写文件纪律（2026-10-08 实机事故）
+`Set-Content -Encoding utf8` 会带 BOM（PS5.1），QGIS 的 metadata.txt 遇 BOM 直接
+"元数据读取错误 → 插件破损"（e47548f 修复）；`-Encoding ascii` 写中文全变问号
+（污染提交标题）。**仓库内任何文件与 git 提交信息一律用 write/edit 工具**（UTF-8
+无 BOM）；pwsh 兜底 `[IO.File]::WriteAllText($p,$s,[Text.UTF8Encoding]::new($false))`。
+自查：读文件头 3 字节是否为 239,187,191。
+
 ## QGIS 实跑开发版
 ```bat
-mklink /J "%AppData%\QGIS\QGIS\profiles\default\python\plugins\cropland_delineator" C:\...\cropland\qgis-plugin\cropland_delineator
+mklink /J "%AppData%\QGIS\QGIS4\profiles\default\python\plugins\cropland_delineator" C:\...\cropland\qgis-plugin\cropland_delineator
 ```
+本机现状（2026-10-08）：已联接至工作区主线副本，旧 v0.8.9 实体目录留档为
+`cropland_delineator_v089_bak`；注册表无 `cropland_delineator/nn_dir`，点选按
+相对路径 `../../nn` → 工作区 cuda 环境。
+改代码后**重启 QGIS 即生效**（无需重装）；metadata.txt 改动尤其要重启才重读。
 
 ## 发版
 `bash tools/publish.sh`（改 metadata.txt 版本后；需 gh auth login，本机暂无 gh）。

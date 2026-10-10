@@ -1,4 +1,4 @@
-﻿[general]
+[general]
 name=Cropland Delineator 鑰曞湴鏍囨敞宸ヤ綔鍙?
 qgisMinimumVersion=4.0
 qgisMaximumVersion=4.99

@@ -672,8 +672,9 @@ class AnnotationController:
         return len(parts)
 
     def apply_split(self, line_layer):
+        """按线切分地块；返回切开处数（调用方据此决定是否退一步重切）。"""
         if not self._require_cell():
-            return
+            return 0
         self._ledger_prepare()
         self.layer.beginEditCommand("切分")
         made, touched = self._run_split(line_layer)
@@ -689,6 +690,7 @@ class AnnotationController:
             self.log("[切分] 线不经过任何地块——沿已挖除的道路画线时，"
                      "两侧本就是空隙，无需再切")
         self.report_stats()
+        return made
 
     def _run_split(self, line_layer):
         """编辑命令内切分当前格全部相交地块；返回 (切开处数, 碰到数)。重放共用。"""

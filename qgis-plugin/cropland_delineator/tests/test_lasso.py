@@ -278,12 +278,13 @@ assert grown[0].x() <= -3000.0 and grown[-1].x() >= 3000.0, \
 # 且只是刚出界，不至于跨过远处地块（3000~3600m 间出界即可）
 assert grown[0].x() > -3100.0 and grown[-1].x() < 3100.0, \
     (grown[0].x(), grown[-1].x())
-# 锚点本就在界外（>3000m）：只多走一步，不无谓外推
+# 锚点本就在界外（>3000m）：只越出一丝（v0.10.4 起 eps=step*2%），
+# 旧实现"多走一整步"会把端点旁的窄地块甩着横切掉
 out_line = [QgsPointXY(3010.0, 0.0), QgsPointXY(3020.0, 0.0)]
 grown2 = lasso.grow_ends(out_line, inside_big, 10.0)
-assert abs(grown2[-1].x() - 3030.0) < 0.1, grown2[-1].x()
-assert abs(grown2[0].x() - 3000.0) < 0.1, grown2[0].x()
-print("[10] 大地块外推（3000m 半径推出界/界外只走一步）ok")
+assert abs(grown2[-1].x() - 3020.2) < 0.05, grown2[-1].x()
+assert abs(grown2[0].x() - 3009.8) < 0.05, grown2[0].x()
+print("[10] 大地块外推（3000m 半径推出界/界外只越一丝）ok")
 
 # ==== T11 磁力道路：mode='road' 收笔=按档宽缓冲差集，端点不外推 ====
 from qgis.gui import QgsMapCanvas
@@ -612,6 +613,88 @@ assert any(abs(a - 800 * 1600) < 1.0 for a in areas), \
     f"B（800×1600）必须原样幸存：{areas}"
 print("[18] 外推不误伤 ok（终点旁贴邻块 B：只切所在块 A，B 原样）")
 
+# ==== T19 外推收敛到边界交点：端点旁的窄条田不被"甩出的一整步"横切 ====
+# v0.10.4：旧实现探到界外后"再多走一整步"（步长下限 10m、大地块加速后
+# 单步可达 64m），端点旁 8m 宽的窄条会被这记直线甩尾整个切开——真机
+# 反馈的"收束后又沿终点向外直线切割其他多边形"。现在二分收敛到边界
+# 交点 + eps(≈0.2m)，窄条必须原样幸存。
+tool4 = map_tools.MagneticSplitTool(mcv, wb)          # mode="split"
+if wb.layer.isEditable():
+    wb.layer.rollBack()
+wb.layer.startEditing()
+app.processEvents()
+ids = [f.id() for f in wb.layer.getFeatures(wb._cell_filter())]
+if ids:
+    wb.layer.dataProvider().deleteFeatures(ids)
+wb.layer.triggerRepaint()
+wb.apply_add(wb.to_layer(QgsGeometry.fromPolygonXY([[
+    QgsPointXY(0, 0), QgsPointXY(800, 0), QgsPointXY(800, 1600),
+    QgsPointXY(0, 1600), QgsPointXY(0, 0)]])))        # A：左块 800×1600
+wb.apply_add(wb.to_layer(QgsGeometry.fromPolygonXY([[
+    QgsPointXY(800, 0), QgsPointXY(808, 0), QgsPointXY(808, 1600),
+    QgsPointXY(800, 1600), QgsPointXY(800, 0)]])))    # B：8m 窄条，紧贴 A
+app.processEvents()
+tool4._engine = None
+tool4.anchors = [QgsPointXY(100.0, 800.0), QgsPointXY(700.0, 800.0)]
+tool4.segs = {}
+grown = tool4._grow_out(list(tool4.anchors))
+assert 800.0 <= grown[-1].x() <= 800.5, \
+    f"终点端应刚越出 A 边界(800)，实测 {grown[-1].x()}"
+assert -0.5 <= grown[0].x() <= 0.0, \
+    f"起点端应刚越出 A 边界(0)，实测 {grown[0].x()}"
+tool4._do_finish()
+feats3 = list(wb.layer.getFeatures(wb._cell_filter()))
+areas = sorted(round(f.geometry().area()) for f in feats3)
+assert len(feats3) == 3, f"A 应切成 2 块、窄条 B 完好，实际 {len(feats3)} 块：{areas}"
+assert any(abs(a - 8 * 1600) < 1.0 for a in areas), \
+    f"窄条 B(8×1600) 必须原样幸存：{areas}"
+print("[19] 外推只越界一丝 ok（端点旁 8m 窄条不被甩尾横切）")
+
+# ==== T20 洞里线端：短尾巴止于首道边界，切不开时才退到外环 ====
+# v0.10.4：地块有洞（挖除留下的洼地）时，短尾巴落在洞里——QGIS 只认"越过
+# 外环"的线端，洞里的点它当"还在多边形内"，于是切不开。收笔时若一处都没
+# 切开，退一步以外环为准再切一次（洞空的则无副作用）。
+out_ring = [QgsPointXY(0, 0), QgsPointXY(1000, 0), QgsPointXY(1000, 1600),
+            QgsPointXY(0, 1600), QgsPointXY(0, 0)]
+gap_ccw = [QgsPointXY(200, 600), QgsPointXY(206, 600), QgsPointXY(206, 1000),
+           QgsPointXY(200, 1000), QgsPointXY(200, 600)]
+gap_cw = list(reversed(gap_ccw))          # 洞环与外环反向，否则几何非法
+A_geom = QgsGeometry.fromPolygonXY([out_ring, gap_cw])     # 带 6m 窄缝的地块
+assert A_geom.isGeosValid(), "带洞地块本身要合法，否则切不开与修复无关"
+tool5 = map_tools.MagneticSplitTool(mcv, wb)
+if wb.layer.isEditable():
+    wb.layer.rollBack()
+wb.layer.startEditing()
+app.processEvents()
+ids = [f.id() for f in wb.layer.getFeatures(wb._cell_filter())]
+if ids:
+    wb.layer.dataProvider().deleteFeatures(ids)
+wb.layer.triggerRepaint()
+wb.apply_add(wb.to_layer(A_geom))
+app.processEvents()
+tool5._engine = None
+tool5.anchors = [QgsPointXY(50.0, 800.0), QgsPointXY(100.0, 800.0)]
+tool5.segs = {}
+assert len(list(wb.layer.getFeatures(wb._cell_filter()))) == 1, "清场没清干净"
+grown = tool5._grow_out(list(tool5.anchors))
+assert 200.0 <= grown[-1].x() <= 200.5, \
+    f"短尾巴应止于窄缝近沿(200)，实测 {grown[-1].x()}"
+assert -0.5 <= grown[0].x() <= 0.0, f"起点端同理，实测 {grown[0].x()}"
+grown_out = tool5._grow_out(list(tool5.anchors), outer=True)
+assert 1000.0 <= grown_out[-1].x() <= 1000.5, \
+    f"退一步时尾巴应止于外环(1000)，实测 {grown_out[-1].x()}"
+# 兜底采样路径（拿不到境界线时）也不许一步跨过窄缝
+inside_a = lambda p: A_geom.intersects(QgsGeometry.fromPointXY(p))
+fb = lasso.grow_ends([QgsPointXY(50.0, 800.0), QgsPointXY(100.0, 800.0)],
+                     inside_a, 10.0)
+assert 200.0 <= fb[-1].x() <= 200.5, f"采样兜底也不许跨缝，实测 {fb[-1].x()}"
+tool5._do_finish()
+feats4 = list(wb.layer.getFeatures(wb._cell_filter()))
+areas = sorted(round(f.geometry().area()) for f in feats4)
+assert len(feats4) == 2, f"带洞地块应被切成 2 块，实际 {len(feats4)}：{areas}"
+assert abs(sum(areas) - A_geom.area()) < 1.0, f"切分不该改变总面积：{areas}"
+print("[20] 洞里线端 ok（短尾巴止于首道边界；切不开时退到外环再切）")
+
 shutil.rmtree(WORK, ignore_errors=True)
-print(f"\n全部 18 组测试通过 ✓  (工作目录已清理)")
+print(f"\n全部 20 组测试通过 ✓  (工作目录已清理)")
 sys.exit(0)

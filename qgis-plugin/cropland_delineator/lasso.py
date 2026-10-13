@@ -438,38 +438,98 @@ def simplify_pts(pts, tol):
     return line if len(line) >= 2 else pts
 
 
+def probe_exit(at, hit, step, step_cap, max_dist):
+    """采样探出界点 + 二分收敛，返回"出界距离"；探不到返回 None。
+
+    只在拿不到地块境界线（escape 回调缺失或失败）时兜底。粗探要加速
+    （大地块能快点探到底），但粗步长会一步跨过界外的窄缝/窄块——尾巴
+    照样扫穿邻块，所以粗探完再用 step/8 细查一遍，取更早的出界处。"""
+    d_out, s, d = None, step, 0.0
+    while d < max_dist:
+        nxt = min(d + s, max_dist)
+        if not hit(at(nxt)):
+            d_out = nxt
+            break
+        d = nxt
+        if d >= step * 80:               # 还没出去 → 大地块，加速
+            s = min(s * 2, step_cap)
+    if d_out is None:
+        return None
+    d_in, fine = 0.0, max(step / 8.0, 0.5)
+    n = int(min(d_out / fine, 600)) or 1
+    for i in range(1, n + 1):
+        probe = d_out * i / float(n)
+        if not hit(at(probe)):
+            d_out = probe
+            break
+        d_in = probe
+    for _ in range(24):                  # 二分到真正的边界交点
+        mid = (d_in + d_out) / 2.0
+        if hit(at(mid)):
+            d_in = mid
+        else:
+            d_out = mid
+    return d_out
+
+
 def grow_ends(pts, inside, step, max_dist=16000.0, step_cap=64.0,
-              inside_end=None):
-    """两端沿首末方向逐步外推，直到落出地块（inside(p) 为 False）。
+              inside_end=None, escape=None, escape_end=None, eps=None):
+    """两端沿首末方向外推，直到刚出地块（inside(p) 为 False）就停。
 
     磁力线的锚点常在地块内部；固定长度延长在斜交边界时会滑进内部出不来，
-    逐步外推到刚出界即停（splitGeometry 要求线两端越过地块边界）。
-    整格底板可达数公里宽：基础步长走满 step*80（默认 800m）还没出去就
-    步长翻倍加速（单步封顶 step_cap），总程封顶 max_dist；最后"多走一步"
-    仍用基础 step，避免大步一跳跨进相邻地块。
+    必须外推到刚出界（splitGeometry 要求线两端都越过地块边界，实测一端在
+    内一端在外一律切不开）。整格底板可达数公里宽，所以这段尾巴有时很长。
+
+    v0.10.4：旧实现"探到界外后再多走一整步"，尾巴实际甩出 step~step_cap+step
+    （10~160m，取决于栅格分辨率与是否加速）——这条直线扫过去会把终点旁的
+    窄地块（窄条田、路边细长地）整个横切，正是"收束后又沿终点向外直线切割
+    其他多边形"的来源；采样步进还会一步跨过界外的窄缝/窄块。现在改由
+    escape 回调直接量出**锚点所在地块境界线的第一个交点**（几何求交，不用
+    采样），尾巴只越界 eps（缺省 step 的 2%，约 0.2m）——实测 0.2m 足够
+    splitGeometry 认定线端在界外，且不可能再横穿任何邻块。拿不到境界线时
+    退回 probe_exit 采样二分。
 
     inside_end：终点端独立的判界回调（缺省沿用 inside）。磁力切分用它把
     "出界"限定为出**锚点所在地块**——整格全部要素并集判界时，终点旁拼着
     邻块，外推线会一路穿过邻块再穿出，把沿途多边形全切了。
+    escape / escape_end：两端各自的"出界距离"回调 escape(a, ux, uy) → float
+    或 None（None=量不出，退回采样）。有它就不用采样，尾巴严格止于边界。
     """
     if len(pts) < 2 or step <= 0:
         return pts
+    if eps is None:
+        eps = max(step * 0.02, 1e-9)
     out = list(pts)
     for end in ("start", "end"):
         a, b = (out[0], out[1]) if end == "start" else (out[-1], out[-2])
         dx, dy = a.x() - b.x(), a.y() - b.y()
         n = math.hypot(dx, dy) or 1.0
         ux, uy = dx / n, dy / n
-        s, walked, p = step, 0.0, a
         hit = inside if end == "start" else (inside_end or inside)
-        while walked < max_dist and hit(p):
-            p = QgsPointXY(p.x() + ux * s, p.y() + uy * s)
-            walked += s
-            if walked >= step * 80:      # 还没出去 → 大地块，加速
-                s = min(s * 2, step_cap)
-        q = QgsPointXY(p.x() + ux * step, p.y() + uy * step)  # 再多走一步
-        if end == "start":
-            out.insert(0, q)
+        esc = escape if end == "start" else (escape_end or escape)
+
+        def at(d):
+            return QgsPointXY(a.x() + ux * d, a.y() + uy * d)
+
+        if not hit(a):
+            # 锚点本就落在界外：越出一丝即可（多走整步会横穿端点旁的窄块）
+            d_q = eps
         else:
-            out.append(q)
+            d_exit = None
+            if esc is not None:
+                try:
+                    d_exit = esc(a, ux, uy)
+                except Exception:
+                    d_exit = None
+            if d_exit is None:
+                d_exit = probe_exit(at, hit, step, step_cap, max_dist)
+            # 探不到边界（地块大到不可能切开）：不外推，免得甩出一条长直线
+            # 把沿途地块全切了——交给调用方报"线碰到但没切开"
+            d_q = 0.0 if d_exit is None else d_exit + eps
+        if d_q > 0:
+            q = at(d_q)
+            if end == "start":
+                out.insert(0, q)
+            else:
+                out.append(q)
     return out

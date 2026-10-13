@@ -6,6 +6,8 @@
   画线时按住 Shift = 正交锁（当前点吸附到与上一点水平/垂直，直路两点即成）
 """
 
+import math
+
 from qgis.PyQt.QtCore import Qt, QTimer, QThread, pyqtSignal, QSettings
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import QApplication
@@ -732,19 +734,36 @@ class MagneticSplitTool(WorkbenchTool):
             self.wb.apply_road(self.wb.to_layer(
                 QgsGeometry.fromPolylineXY(pts)))
             return
-        pts = self._grow_out(pts)
+        path = list(pts)                 # 收笔路径（未外推）
+        pts = self._grow_out(path)
         self._reset_stroke()
         line = QgsGeometry.fromPolylineXY(pts)
-        self.wb.apply_split(self.wb.to_layer(line))
+        made = self.wb.apply_split(self.wb.to_layer(line))
+        if made == 0:
+            # 线端落在洞（挖除留下的洼地）里：QGIS 只认"越过外环"的线端，
+            # 洞里的点它当"还在多边形内"→切不开。退一步以外环为准再切一次
+            # （洞若是空的，这一步无副作用；洞里有别的地块才会带上它）。
+            pts2 = self._grow_out(path, outer=True)
+            if not (_same(pts2[0], pts[0]) and _same(pts2[-1], pts[-1])):
+                self.wb.log("[磁力] 线端落在洞里（挖除的洼地），已延到地块外沿再切")
+                self.wb.apply_split(self.wb.to_layer(
+                    QgsGeometry.fromPolylineXY(pts2)))
 
-    def _grow_out(self, pts):
+    def _grow_out(self, pts, outer=False):
         """两端外推到刚出"锚点所在地块"（splitGeometry 要求线越过地块边界）。
 
         v0.10.2 修复：原实现 inside 用整格全部要素并集判界——终点旁拼着
         相邻地块（或整格底板一大块）时，外推线会一路笔直穿过去再穿出，
         收束后"沿终点向外直线切割其他多边形"即此。现在每端只针对包含
-        该端点的地块集合判界：出这块即停；哪怕多走一步刺进贴边邻块，
-        端点仍在邻块内部（未贯穿），splitGeometry 切不开它，无损。
+        该端点的地块集合判界：出这块即停。
+
+        v0.10.4：旧实现"探到界外后再多走一整步"，尾巴实际甩出 10~160m
+        （步长下限 10m、大地块加速后单步可达 64m），横切端点旁的窄条田
+        就是收笔后那条多余的直线。现在直接求"锚点→地块境界线"的第一个
+        交点（make_escape），尾巴只越界 eps（≈0.2m）：越界一丝即够切开
+        （实测 0.2m 足够），不再扫到任何邻块，也没有采样步长一步跨过
+        窄缝/窄块的问题。outer=True 时以地块**外环**为准（见上：洞里的
+        线端 QGIS 不认，收笔失败时才退这一步）。
         """
         try:
             geoms = [f.geometry() for f in
@@ -763,9 +782,69 @@ class MagneticSplitTool(WorkbenchTool):
                 return any(g.intersects(gp2) for g in gs)
             return _in
 
+        def make_escape(p0, use_outer=False):
+            """锚点沿方向 u 到"所在地块"境界线的最近交点距离（None=量不出）。
+
+            采样法只能逐点试"还在不在里面"，步长大时一步就能跨过界外的
+            窄缝或窄块（尾巴由此扫穿邻块）；这里改成射线与境界线求交，
+            取第一个交点——尾巴必然落在锚点所在地块内部，直到越过边界
+            一丝为止。"""
+            gp = QgsGeometry.fromPointXY(p0)
+            gs = [g for g in geoms if g.intersects(gp)]
+            if not gs:
+                return None
+            try:
+                owner = gs[0] if len(gs) == 1 else QgsGeometry.unaryUnion(gs)
+                if owner is None or owner.isEmpty():
+                    return None
+                if use_outer:      # 只留外环：洞不算"外面"
+                    parts = (owner.asMultiPolygon() if owner.isMultipart()
+                             else [owner.asPolygon()])
+                    outers = [[rings[0]] for rings in parts if rings]
+                    if not outers:
+                        return None
+                    owner = QgsGeometry.fromMultiPolygonXY(outers)
+                    if owner is None or owner.isEmpty():
+                        return None
+                try:            # QGIS 4 去掉了 QgsGeometry.boundary()
+                    bnd = QgsGeometry(owner.constGet().boundary())
+                except AttributeError:
+                    bnd = owner.boundary()
+                if bnd is None or bnd.isEmpty():
+                    return None
+            except Exception:
+                return None
+
+            def _points(geom):
+                t = geom.type()
+                if t == Qgis.GeometryType.Point:
+                    return [geom.asPoint()]
+                if t == Qgis.GeometryType.MultiPoint:
+                    return list(geom.asMultiPoint())
+                if t == Qgis.GeometryType.GeometryCollection:
+                    out_pts = []
+                    for sub in geom.asGeometryCollection():
+                        out_pts.extend(_points(sub))
+                    return out_pts
+                return [QgsPointXY(v) for v in geom.vertices()]
+
+            def _esc(a, ux, uy):
+                far = QgsPointXY(a.x() + ux * 16000.0, a.y() + uy * 16000.0)
+                inter = QgsGeometry.fromPolylineXY([a, far]).intersection(bnd)
+                if inter is None or inter.isEmpty():
+                    return None
+                best = None
+                for p in _points(inter):
+                    d = math.hypot(p.x() - a.x(), p.y() - a.y())
+                    if d > 1e-6 and (best is None or d < best):
+                        best = d
+                return best
+            return _esc
+
         step = self._engine.pixel_size() * 2 if self._engine is not None else 10.0
         return grow_ends(pts, make_inside(pts[0]), max(step, 10.0),
-                         inside_end=make_inside(pts[-1]))
+                         escape=make_escape(pts[0], outer),
+                         escape_end=make_escape(pts[-1], outer))
 
 
 class PolygonTool(WorkbenchTool):

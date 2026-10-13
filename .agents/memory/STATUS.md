@@ -1,26 +1,21 @@
 # STATUS — Cropland Delineator
-Updated: 2026-10-13（v0.10.3 修复经她本机验收）
+Updated: 2026-10-14（v0.10.4：磁力切分收束甩尾修复，全绿待她现场验收）
 
 ## Current Goal
-花花同学（wwhua12128）接手维护；插件 **0.10.3** 已在她本机 QGIS 4.2.2 实测可用。
+花花同学（wwhua12128）接手维护；**0.10.4** 待她本机 QGIS 实测。
 当前：常态化维护（点选性能＋朋友实机反馈）；发版仍卡在上游权限。
 
 ## Just Finished
+- **v0.10.4（2026-10-14）**：修「磁力切分收束后沿终点向外直甩一条线、横切邻块」。
+  根因是她台账里量到的外推尾巴 20~2271 m（公里级地块＋旧实现"探到界外再多走
+  一整步"＋加速步长一步跨过窄缝/窄条田）。改为射线与所在地块境界线求交、只越
+  0.2 m；线端落洞里切不开时退到外环重切一次。lasso 19→20 组，六套全绿；
+  详见 `daily/2026-10-14.md`。
 - **v0.10.3（2026-10-13）**：修「渔网里混进空几何要素 → 工作台打不开」
   （`_cell_id`/`_grid_cells` 跳过空几何 ＋ `setup_ui`/`run_annotate` 兜底弹窗），
-  新增回归 T13，六套全绿（ledger 17/lasso 18/snap 6/bae 13/qa/clickseg 14）；
-  提交 `6d5da2a` 已推 fork；她现场确认「可以正常打开，版本 v0.10.3」。
-  顺带还原 `metadata.txt` 里双重编码的 name 乱码。
-- Windows 迁移完成：SAM 环境全链路（py3.11 venv＋torch 2.6.0+cu124 上 RTX 4060，
-  真 worker 冒烟 ready:cuda/pong ✓）、QGIS 4.2.2 无头六套全绿。
-- 修三只真实 Windows bug：osm_roads.cache_path 判文件图层改 isfile；
-  save_roads 撞文件锁退旁路文件（T9b 回归）；clickseg.find_nn_dir 建 realpath
-  先行（mklink /J 联接安装找不到 nn/）。tests/win_headless.py 测试入口入仓。
-- **fork 完成**：wwhua12128/cropland（原仓库实为 public）；remote fork=花花账号
-  （提交已全部推上去，至本次），origin=上游 luohaoran616 便于日后同步。
-- **QGIS 插件走联接**：profile（QGIS4/default）`python\plugins\cropland_delineator`
-  是联接 → 工作区主线副本（现 0.10.3），改代码重启 QGIS 即生效；同名旧 0.10.1 实体
-  副本已移出扫描路径至 `python\_archive_plugins\cropland_delineator_v089_bak`。
+  新增回归 T13，提交 `6d5da2a`；她现场确认「可以正常打开，版本 v0.10.3」。
+- Windows 迁移完成：SAM 环境全链路（py3.11 venv＋torch 2.6.0+cu124 上 RTX 4060）、
+  QGIS 4.2.2 无头六套全绿；QGIS 插件走**联接**指向工作区源码，改代码重启即生效。
 
 ## Open Problems
 - 发版（plugins.xml 给朋友升级）走上游 release，需 luohaoran616 权限——
@@ -31,9 +26,10 @@ Updated: 2026-10-13（v0.10.3 修复经她本机验收）
 - 旧遗留 F3/F6 未动。
 
 ## Next Actions
-1. 「🖱 点选」在她本机实测锁面＋密格性能（尚未实测）。
-2. 朋友实机验证 0.10.3（碎块/缝隙/卡顿）。
-3. 需发版给朋友时：找原作者推上游，或把朋友插件源切到 fork 的 release。
+1. 让花花重启 QGIS 用 v0.10.4 复测磁力切分（重点：收束后还有没有多出来的直线）。
+2. 「🖱 点选」在她本机实测锁面＋密格性能（尚未实测）。
+3. 朋友实机验证 0.10.x（碎块/缝隙/卡顿）。
+4. 需发版给朋友时：找原作者推上游，或把朋友插件源切到 fork 的 release。
 
 ## Key Paths
 - 仓库：工作区 `cropland/`；fork=wwhua12128/cropland；上游=luohaoran616/cropland

@@ -764,16 +764,37 @@ class MagneticSplitTool(WorkbenchTool):
         （实测 0.2m 足够），不再扫到任何邻块，也没有采样步长一步跨过
         窄缝/窄块的问题。outer=True 时以地块**外环**为准（见上：洞里的
         线端 QGIS 不认，收笔失败时才退这一步）。
+
+        v0.10.5：判界/量界的"锚点所在地块"改取**线体内侧一点**（_seed），
+        不取锚点本身。花花习惯把起终点点在田埂/公共边线上（吸附后正好
+        落在线上），此时"与锚点相交"的地块两边都算、并集一量就量到对面
+        边界，尾巴照样顺着邻块扫过去（实测 1000m 那种）。改取线体内侧
+        一点判界后，锚点落在谁的边上就只认线体所在那块：尾巴只越一丝。
         """
         try:
             geoms = [f.geometry() for f in
                      self.wb.layer.getFeatures(self.wb._cell_filter())]
         except Exception:
             geoms = []
+        step = max(self._engine.pixel_size() * 2
+                   if self._engine is not None else 10.0, 10.0)
 
-        def make_inside(p0):
-            gp = QgsGeometry.fromPointXY(p0)
-            gs = [g for g in geoms if g.intersects(gp)]
+        def _owners(p):
+            gp = QgsGeometry.fromPointXY(p)
+            return [g for g in geoms if g.intersects(gp)]
+
+        def _seed(a, b):
+            """线体内侧一点（从锚点朝线体退，不超末段一半、不超 step）。
+
+            端点贴/v0.10.5 见上：锚点落在公共边线上时，只有线体内侧那点
+            才唯一说清"这条线在哪块地里"。"""
+            dx, dy = a.x() - b.x(), a.y() - b.y()
+            n = math.hypot(dx, dy) or 1.0
+            back = min(step, n * 0.5)
+            return QgsPointXY(a.x() - dx / n * back, a.y() - dy / n * back)
+
+        def make_inside(a, b):
+            gs = _owners(_seed(a, b)) or _owners(a)
             if not gs:       # 端点本就落在地块外：只多走一步
                 return lambda p: False
 
@@ -782,15 +803,15 @@ class MagneticSplitTool(WorkbenchTool):
                 return any(g.intersects(gp2) for g in gs)
             return _in
 
-        def make_escape(p0, use_outer=False):
+        def make_escape(a, b, use_outer=False):
             """锚点沿方向 u 到"所在地块"境界线的最近交点距离（None=量不出）。
 
             采样法只能逐点试"还在不在里面"，步长大时一步就能跨过界外的
             窄缝或窄块（尾巴由此扫穿邻块）；这里改成射线与境界线求交，
             取第一个交点——尾巴必然落在锚点所在地块内部，直到越过边界
-            一丝为止。"""
-            gp = QgsGeometry.fromPointXY(p0)
-            gs = [g for g in geoms if g.intersects(gp)]
+            一丝为止。锚点已经不在该地块内部（落在边界线上、或在线体
+            另一侧）时返回 0：线端本就够到界外，越一丝即可。"""
+            gs = _owners(_seed(a, b)) or _owners(a)
             if not gs:
                 return None
             try:
@@ -829,6 +850,8 @@ class MagneticSplitTool(WorkbenchTool):
                 return [QgsPointXY(v) for v in geom.vertices()]
 
             def _esc(a, ux, uy):
+                if not owner.contains(QgsGeometry.fromPointXY(a)):
+                    return 0.0        # 锚点已在界外或正贴在界线上
                 far = QgsPointXY(a.x() + ux * 16000.0, a.y() + uy * 16000.0)
                 inter = QgsGeometry.fromPolylineXY([a, far]).intersection(bnd)
                 if inter is None or inter.isEmpty():
@@ -841,10 +864,9 @@ class MagneticSplitTool(WorkbenchTool):
                 return best
             return _esc
 
-        step = self._engine.pixel_size() * 2 if self._engine is not None else 10.0
-        return grow_ends(pts, make_inside(pts[0]), max(step, 10.0),
-                         escape=make_escape(pts[0], outer),
-                         escape_end=make_escape(pts[-1], outer))
+        return grow_ends(pts, make_inside(pts[0], pts[1]), step,
+                         escape=make_escape(pts[0], pts[1], outer),
+                         escape_end=make_escape(pts[-1], pts[-2], outer))
 
 
 class PolygonTool(WorkbenchTool):

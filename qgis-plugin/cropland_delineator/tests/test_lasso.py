@@ -695,6 +695,45 @@ assert len(feats4) == 2, f"带洞地块应被切成 2 块，实际 {len(feats4)}
 assert abs(sum(areas) - A_geom.area()) < 1.0, f"切分不该改变总面积：{areas}"
 print("[20] 洞里线端 ok（短尾巴止于首道边界；切不开时退到外环再切）")
 
+# ==== T21 端点点在公共边线上：只认线体所在那块，别顺着邻块扫过去 ====
+# v0.10.5：花花习惯把起终点点在田埂/公共边线上（吸附后正好落线）。此时
+# "与锚点相交"的地块**两边都算**，并集一量就量到对面边界——尾巴顺着邻块
+# 扫到底（本场景 800m）。改取线体内侧一点判界后，只认线体所在那块 A。
+A_edge = QgsGeometry.fromPolygonXY([[QgsPointXY(0, 0), QgsPointXY(800, 0),
+                                     QgsPointXY(800, 1600), QgsPointXY(0, 1600),
+                                     QgsPointXY(0, 0)]])
+B_edge = QgsGeometry.fromPolygonXY([[QgsPointXY(800, 0), QgsPointXY(1600, 0),
+                                     QgsPointXY(1600, 1600),
+                                     QgsPointXY(800, 1600),
+                                     QgsPointXY(800, 0)]])
+tool6 = map_tools.MagneticSplitTool(mcv, wb)
+if wb.layer.isEditable():
+    wb.layer.rollBack()
+wb.layer.startEditing()
+app.processEvents()
+ids = [f.id() for f in wb.layer.getFeatures(wb._cell_filter())]
+if ids:
+    wb.layer.dataProvider().deleteFeatures(ids)
+wb.layer.triggerRepaint()
+wb.apply_add(wb.to_layer(A_edge))
+wb.apply_add(wb.to_layer(B_edge))
+app.processEvents()
+tool6._engine = None
+tool6.anchors = [QgsPointXY(100.0, 800.0), QgsPointXY(800.0, 800.0)]  # 终点正落在 A|B 公共边线上
+tool6.segs = {}
+grown = tool6._grow_out(list(tool6.anchors))
+assert 800.0 <= grown[-1].x() <= 800.5, \
+    f"终点贴 A|B 边线时尾巴应只越一丝(800.2)，实测 {grown[-1].x()}"
+assert -0.5 <= grown[0].x() <= 0.0, f"起点端同理，实测 {grown[0].x()}"
+tool6._do_finish()
+feats5 = list(wb.layer.getFeatures(wb._cell_filter()))
+areas = sorted(round(f.geometry().area()) for f in feats5)
+assert len(feats5) == 3, f"应只切开 A（2 块）＋ B 原样，实际 {len(feats5)}：{areas}"
+assert abs(sum(areas) - (A_edge.area() + B_edge.area())) < 1.0, \
+    f"切分不该改变总面积：{areas}"
+assert areas[-1] == round(B_edge.area()), f"邻块 B 必须原样：{areas}"
+print("[21] 端点在公共边线 ok（只认线体所在块，邻块原样）")
+
 shutil.rmtree(WORK, ignore_errors=True)
-print(f"\n全部 20 组测试通过 ✓  (工作目录已清理)")
+print(f"\n全部 21 组测试通过 ✓  (工作目录已清理)")
 sys.exit(0)

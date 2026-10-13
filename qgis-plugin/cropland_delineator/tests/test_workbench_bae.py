@@ -284,6 +284,36 @@ wb.apply_osm_roads()                          # 走缓存层，正常走完挖�
 assert any("[OSM 道路]" in m for m in LOGS[-3:])
 print("T12 道路层缺失 → 自动回退缓存文件 ✓")
 
-print("\n全部 12 项通过 ✓")
+# ==== T13 渔网里混入空要素（无几何）不得让工作台崩 ====
+null_mem = QgsVectorLayer("polygon?crs=EPSG:4550", "grid_null", "memory")
+null_mem.dataProvider().addAttributes([
+    QgsField("FID_1", QMetaType.Type.QString),
+    QgsField("Row", QMetaType.Type.Int),
+    QgsField("Col", QMetaType.Type.Int),
+])
+null_mem.updateFields()
+ok = QgsFeature(null_mem.fields())
+ok.setAttributes(["null_ok", 0, 0])
+ok.setGeometry(QgsGeometry.fromPolygonXY([[
+    QgsPointXY(0, 0), QgsPointXY(1000, 0),
+    QgsPointXY(1000, 1000), QgsPointXY(0, 1000), QgsPointXY(0, 0)]]))
+null_mem.dataProvider().addFeature(ok)
+empty = QgsFeature(null_mem.fields())     # 误建的空要素：几何为 null
+empty.setAttributes([None, 0, 1])
+null_mem.dataProvider().addFeature(empty)
+assert null_mem.featureCount() == 2, null_mem.featureCount()
+_prev_dialog = wb.dialog
+wb.dialog = type("D", (), {"grid_layer": staticmethod(lambda: null_mem)})()
+cells = wb._grid_cells()               # 修复前：ValueError: Null geometry...
+assert cells is not None and len(cells) == 1, f"空要素应被跳过，实得 {cells}"
+assert cells[0][0] == "null_ok", cells[0]
+fnull = [f for f in null_mem.getFeatures()
+         if f.geometry() is None or f.geometry().isNull()]
+assert len(fnull) == 1, "测试数据应含 1 个空要素"
+assert wb._cell_id(fnull[0], fnull[0].geometry()) is None
+wb.dialog = _prev_dialog
+print("T13 空格容错 ✓  空要素跳过，_cell_id 不再抛 ValueError")
+
+print("\n全部 13 项通过 ✓")
 shutil.rmtree(WORK, ignore_errors=True)
 app.exitQgis()

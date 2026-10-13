@@ -467,6 +467,8 @@ class AnnotationController:
         for name in ("FID_1", "FID", "id", "ID"):
             if name in fields and feat[name] not in (None, ""):
                 return str(feat[name])
+        if geom is None or geom.isNull() or geom.isEmpty():
+            return None
         c = geom.centroid().asPoint()
         return f"cell_{int(c.x())}_{int(c.y())}"
 
@@ -1124,9 +1126,15 @@ class AnnotationController:
 
         cells = []
         for f in grid.getFeatures():
+            geom = f.geometry()
+            if geom is None or geom.isNull() or geom.isEmpty():
+                continue          # 误建的空要素没有几何，不参与导航/进度
             row = _num(f["Row"]) if "Row" in names else 0.0
             col = _num(f["Col"]) if "Col" in names else 0.0
-            cells.append((self._cell_id(f, f.geometry()), row, col, f.id()))
+            cid = self._cell_id(f, geom)
+            if cid is None:
+                continue
+            cells.append((cid, row, col, f.id()))
         cells.sort(key=lambda c: (c[1], c[2], c[3]))
         return cells
 
@@ -2420,7 +2428,11 @@ class AnnotateDock(QDockWidget):
         self.log_box.setMinimumHeight(72)
         layout.addWidget(self.log_box, 1)
 
-        self._sync_ui()
+        try:
+            self._sync_ui()
+        except Exception:   # 渔网数据异常（空格/坏几何）不该让工作台打不开
+            import traceback
+            self.append_log("[!] 界面初始化异常：\n" + traceback.format_exc())
         self.append_log(f"[i] 工作台就绪 v{_plugin_version()}：展开"
                         "「① 标注数据」→ 选渔网/文件 → 打开"
                         "→ 选中格建底板 → 开画")

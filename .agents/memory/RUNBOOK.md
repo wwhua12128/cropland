@@ -64,5 +64,15 @@ mklink /J "%AppData%\QGIS\QGIS4\profiles\default\python\plugins\cropland_delinea
 留在 plugins 目录里会与主线撞名（QGIS 记成 `cropland_delineator-0`，两条工具栏打架），
 2026-10-13 已移出扫描路径到 `profiles\default\python\_archive_plugins\`。
 
+## 常见现场故障（2026-10-13 起）
+- **工作台点了没反应** / 日志出现 `ValueError: Null geometry cannot be converted to
+  a point`：渔网层里混进了**空几何要素**（手滑建的"空格"）。v0.10.3 起
+  `_grid_cells` 直接跳过空要素、`_cell_id` 对空几何返回 None，且 dock 构建失败会
+  弹窗而不是只写日志。要根治可在渔网层属性表删掉那条没有几何的记录。
+- **插件"不见了"先分清两件事**：插件管理器里的勾选框是**启用/停用**（取消勾选≠卸载），
+  已经勾着时再点一下就是把它关掉；真的"卸载"才会删掉联接目录和
+  `QGIS4.ini [PythonPlugins]` 里的同名键（`.ini` 里残留的、指向已移走目录的
+  `xxx=true` 会让 QGIS 启动时报"无法加载插件 xxx"，2026-10-13 已自动清理一次）。
+
 ## 发版
 `bash tools/publish.sh`（改 metadata.txt 版本后；需 gh auth login，本机暂无 gh）。

@@ -77,7 +77,14 @@ class CroplandDelineatorPlugin:
             else:
                 dock.close()
             return
-        dock = AnnotateDock(self.iface)
+        try:
+            dock = AnnotateDock(self.iface)
+        except Exception as exc:   # 构建失败要给可见提示，不能只留在日志里
+            self.action_annotate.setChecked(False)
+            QMessageBox.critical(
+                self.iface.mainWindow(), "Cropland Delineator",
+                f"工作台打开失败：{exc}")
+            return
         self.annotate_dialog = dock
         # 侧栏自身的 X / 视图菜单切换 → 同步菜单勾选态
         dock.visibilityChanged.connect(self.action_annotate.setChecked)
